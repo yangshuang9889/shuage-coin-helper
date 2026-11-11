@@ -292,7 +292,7 @@ class UiMixin:
         self.pair_text = tk.Text(row3, height=3, width=50, font=("Microsoft YaHei", 9),
                                  bd=1, relief="solid", highlightthickness=0)
         self.pair_text.pack(side="left", fill="x", expand=True)
-        self.pair_text.insert("1.0", "# 每行一个：IP:端口 配对码\n# 例：192.168.9.20:37013 123456")
+        self.pair_text.insert("1.0", "# 每行一个：IP:端口 配对码\n# 例：192.168.1.100:37013 123456")
         self.pair_text.bind("<Return>", self._on_pair_text_enter)
         self.pair_text.bind("<Control-Return>", self._on_pair_text_newline)
         ttk.Button(row3, text="批量配对", command=self.batch_pair_device).pack(side="left", padx=6)

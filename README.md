@@ -1,5 +1,9 @@
 # 爽哥刷金币助手（多设备版）
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB.svg)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6.svg)](#环境要求)
+
 > 挂在电脑上的安卓自动化小工具：通过 **adb** 模拟手指，帮你在抖音 / 快手 / 抖音极速版 / 快手极速版 / 微信视频号里**自动刷视频、自动赚金币、自动关广告**，支持多台手机同时跑，各自独立节奏。
 
 ![界面截图](docs/images/screenshot.png)
@@ -162,8 +166,16 @@ shuage-coin-helper-v2/
 
 ---
 
+## 开源协议
+
+本项目采用 [Apache License 2.0](LICENSE) 开源。
+
+你可以自由使用、修改、分发本项目（**含商业用途**），但需保留版权与许可声明，并在修改过的文件中注明改动。
+
+Copyright 2026 杨爽工作室 (Yang Shuang Studio)
+
+---
+
 ## 作者
 
-**杨爽工作室** ｜ Copyright © 杨爽工作室
-
-开源协议详见 [LICENSE](LICENSE)。
+**杨爽工作室** ｜ 官网：<https://sgzs.xn--yrv04v.com>

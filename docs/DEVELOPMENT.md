@@ -48,7 +48,7 @@ AIGC:
 
 | 组件 | 版本/说明 | 用途 |
 |---|---|---|
-| Python | 3.12.10（运行时）；编译/打包用 `C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe` | 主程序语言 |
+| Python | 3.12.10（运行时）；编译/打包用 `%LOCALAPPDATA%\Programs\Python\Python312\python.exe` | 主程序语言 |
 | GUI | tkinter + ttk（vista 主题） | 主界面、日志窗口、模板编辑等 |
 | 图像识别 | OpenCV（cv2）+ numpy，`cv2.matchTemplate` | 屏幕截图匹配模板 |
 | 编译 | Cython 3.3.0（`setup.py` 编译 `constants.py`、`ui.py`、`scrcpy.py`、`swipe.py`） | 生成 `cp312-win_amd64.pyd` |
@@ -281,7 +281,7 @@ _try_voice_command：强制校验唤醒态；3 秒去抖；命中 VOICE_COMMANDS
 ### 3.3 pyd 重编流程（改 _modules_src 源码后必做）
 
 1. **确认环境**：使用 Python 3.12 绝对路径
-   `C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe`。
+   `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`。
 2. **停占用进程**：先结束正在运行的 exe/pythonw 进程，避免 `copy2` 覆盖 pyd 时 **WinError 32**（文件被占用）。
 3. **编译**：在 `_modules_src` 下执行 `python setup.py build_ext --inplace`（`setup.py` 内 `cythonize(["constants.py", "ui.py", "scrcpy.py", "swipe.py"])`），生成对应 `cp312-win_amd64.pyd`。
    > 注意：当前 `setup.py` **只编译 constants、ui、scrcpy、swipe 四个模块**。其他模块（devices/voice_config 等）如被修改，需先在 `setup.py` 的 `cythonize` 列表中加入对应模块再编译。

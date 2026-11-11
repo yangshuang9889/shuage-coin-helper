@@ -12,14 +12,14 @@ except Exception:
 
 class SpeechMixin:
     def _device_label(self, serial):
-        """设备标识：备注名优先；无备注返回 serial；IP 形式（192.168.9.20:5555）截取 IP 部分（去端口），本地 USB serial 原样用"""
+        """设备标识：备注名优先；无备注返回 serial；IP 形式（192.168.1.100:5555）截取 IP 部分（去端口），本地 USB serial 原样用"""
         name = (self.device_notes.get(serial) or "").strip()
         if name:
             return name
         s = str(serial)
         if ":" in s:
             head = s.split(":")[0]
-            if head.replace(".", "").isdigit():  # 形如 192.168.9.20:5555 → 192.168.9.20
+            if head.replace(".", "").isdigit():  # 形如 192.168.1.100:5555 → 192.168.1.100
                 return head
         return s
 

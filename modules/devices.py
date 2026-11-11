@@ -348,7 +348,7 @@ class DevicesMixin:
     def connect_device(self):
         addr = self.var_addr.get().strip()
         if not addr:
-            messagebox.showwarning("提示", "请输入 IP:端口，例如 192.168.9.20:5555")
+            messagebox.showwarning("提示", "请输入 IP:端口，例如 192.168.1.100:5555")
             return
         if ":" not in addr:
             addr += ":5555"

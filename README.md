@@ -82,7 +82,7 @@ pip install opencv-python numpy Pillow sounddevice pywin32 vosk
 python 爽哥刷金币助手.py
 ```
 
-也可以双击 `启动爽哥刷金币助手_源码版.bat`（内部已绑定 Python 3.12 的 `pythonw.exe`，无黑窗）。
+也可以双击 `启动爽哥刷金币助手_源码版.bat`（自动优先查找 Python 3.12 的 `pythonw.exe`，找不到再回退到 PATH 中的 `pythonw`，也可在 bat 内手动指定解释器路径，无黑窗启动）。
 
 ### 方式二：免安装包
 

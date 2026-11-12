@@ -4,8 +4,8 @@
 # 右键 exe → 属性 → 详细信息 可看到这些字段
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 2, 3),
-    prodvers=(1, 0, 2, 3),
+    filevers=(1, 0, 2, 4),
+    prodvers=(1, 0, 2, 4),
     mask=0x3F,
     flags=0x0,
     OS=0x40004,
@@ -18,12 +18,12 @@ VSVersionInfo(
       StringTable('080404b0', [
         StringStruct('CompanyName', '杨爽工作室'),
         StringStruct('FileDescription', '爽哥刷金币助手·多设备版 - 自动刷视频与赚金币任务助手'),
-        StringStruct('FileVersion', 'V1.0.2.3'),
+        StringStruct('FileVersion', 'V1.0.2.4'),
         StringStruct('InternalName', '爽哥刷金币助手'),
         StringStruct('LegalCopyright', 'Copyright (C) 2026 杨爽工作室'),
         StringStruct('OriginalFilename', '爽哥刷金币助手.exe'),
         StringStruct('ProductName', '爽哥刷金币助手'),
-        StringStruct('ProductVersion', 'V1.0.2.3')
+        StringStruct('ProductVersion', 'V1.0.2.4')
       ])
     ]),
     VarFileInfo([VarStruct('Translation', [2052, 1200])])

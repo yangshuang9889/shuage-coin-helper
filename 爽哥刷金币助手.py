@@ -67,7 +67,7 @@ class VideoSwiperApp(LoggerMixin, ConfigMixin, DevicesMixin, SwipeMixin, VoiceCo
         self.last_box_hint = 0     # 缺坐标提示节流
         self.last_img_check = {}   # serial -> 上次图像任务检查时间
         self.img_cooldown = {}     # (serial, 模板名) -> 命中冷却
-        self.disappear_pos = {}    # (serial, 模板名) -> 等待消失模板最近出现位置 (cx, cy)
+        self.disappear_pos = {}    # (serial, 模板名) -> 等待消失模板最近出现位置 (cx, cy, 时间戳)
         self.last_wait_log = {}    # (serial, 模板名) -> 上次等待日志时间戳
         self.last_ui_check = {}    # serial -> 上次界面异常检查时间戳（节流）
         self.ui_correct_fail = {}  # serial -> 界面异常连续纠正失败次数

@@ -14,9 +14,9 @@ from tkinter import simpledialog
 import tkinter as tk
 from tkinter import ttk
 
-from adb_utils import run_adb, run_adb_binary
+from adb_utils import run_adb, run_adb_binary, screencap_bgr
 from app_config import app_dir_name
-from constants import APP_NAMES, APP_VERSION, LAUNCHER_PKGS, MATCH_THRESHOLD, SWIPE_FAIL_SPEAK_THRESHOLD, TPL_COMMON_DIR, UI_CHECK_INTERVAL, UI_CORRECT_MAX_FAIL, UI_FORCE_RESTART_LIMIT, UI_FREEZE_MAX_FAIL, UI_RECOVER_MAX_ATTEMPTS
+from constants import APP_NAMES, APP_VERSION, LAUNCHER_PKGS, MATCH_THRESHOLD, SWIPE_FAIL_SPEAK_THRESHOLD, TPL_COMMON_DIR, UI_CHECK_INTERVAL, UI_CORRECT_MAX_FAIL, UI_FORCE_RESTART_LIMIT, UI_FREEZE_MAX_FAIL, UI_RECOVER_MAX_ATTEMPTS, WAIT_DISAPPEAR_COOLDOWN, WAIT_DISAPPEAR_POLL, WAIT_DISAPPEAR_TIMEOUT
 
 try:
     import cv2
@@ -40,7 +40,7 @@ class SwipeMixin:
                        "task_done": "任务完成（识别到即停止刷）"}
     # 模板类型下拉选项：value 为内部英文 key（存储/匹配不变），显示为中文说明
     _TPL_KIND_CHOICES = [("task", "任务按钮（出现即点）"), ("close", "广告关闭按钮×（通用）"),
-                         ("wait_appear", "等待元素出现"), ("wait_disappear", "等待元素消失"),
+                         ("wait_appear", "等待元素出现"), ("wait_disappear", "等待元素消失（盯到它消失再点原位置）"),
                          ("live", "直播间（命中即返回键退出）"),
                          ("wait_back", "等待元素出现（出现即按返回键）"),
                          ("captcha", "验证码（命中即暂停设备提醒）"),
@@ -371,7 +371,7 @@ class SwipeMixin:
         win.title(("新增模板" if is_new else "编辑模板：%s" % name) + " — " + APP_VERSION)
         win.transient(self.root)
         win.grab_set()
-        win.geometry("540x640")
+        win.geometry("540x700")  # 加「最长等待秒数」一行后调高，避免底部按钮被挤出窗口
         frm = ttk.Frame(win, padding=12)
         frm.pack(fill="both", expand=True)
         # 中间列可伸缩，右侧提示列限宽换行，避免挤压输入框/下拉箭头
@@ -477,6 +477,25 @@ class SwipeMixin:
                   foreground="#888", wraplength=170, justify="left").grid(row=row, column=2, sticky="w")
         row += 1
 
+        ttk.Label(frm, text="最长等待秒数").grid(row=row, column=0, sticky="e", pady=3)
+        var_wait = tk.StringVar(value=str(int(meta.get("wait_timeout", WAIT_DISAPPEAR_TIMEOUT))))
+        spn_wait = ttk.Spinbox(frm, from_=3, to=120, increment=1, width=6, textvariable=var_wait)
+        spn_wait.grid(row=row, column=1, sticky="w", padx=6)
+        ttk.Label(frm, text="仅「等待元素消失」生效：命中后\n连续盯防这么久等它消失，超时\n放弃（默认 %d 秒）" % WAIT_DISAPPEAR_TIMEOUT,
+                  foreground="#888", wraplength=170, justify="left").grid(row=row, column=2, sticky="w")
+
+        def _sync_wait_state(*_a):
+            """最长等待秒数只对「等待元素消失」可选，其它类型置灰"""
+            ok = self._TPL_KIND_REVERSE.get(var_kind.get(), "") == "wait_disappear"
+            try:
+                spn_wait.configure(state="normal" if ok else "disabled")
+            except Exception:
+                pass
+
+        var_kind.trace_add("write", _sync_wait_state)
+        _sync_wait_state()
+        row += 1
+
         ttk.Label(frm, text="分类目录").grid(row=row, column=0, sticky="e", pady=3)
         dir_now = meta.get("dir") or app_dir_name(meta.get("pkg", ""))
         existing_dirs = sorted({m.get("dir") for m in self.coords["templates"].values()
@@ -551,14 +570,14 @@ class SwipeMixin:
                        var_name=var_name, var_pkg=var_pkg, var_kind=var_kind, var_thr=var_thr,
                        var_dir=var_dir, var_dx=var_dx, var_dy=var_dy,
                        var_op=var_op, var_opx=var_opx, var_opy=var_opy, var_note=var_note,
-                       var_bind=var_bind, var_region=var_region)
+                       var_bind=var_bind, var_region=var_region, var_wait=var_wait)
                    ).pack(side="left", padx=(0, 10))
         ttk.Button(frm_btn, text="取消", width=12, command=win.destroy).pack(side="left", padx=(10, 0))
         row += 1
         lbl_examples = ttk.Label(
             frm,
             text=("模板类型示例：任务按钮＝日常点击的按钮；广告关闭×＝关闭弹窗/开屏广告；"
-                  "等待元素出现＝元素出现后点击；等待元素消失＝元素消失后点原位置；"
+                  "等待元素出现＝元素出现后点击；等待元素消失＝盯住它，消失瞬间点原位置（可设最长等待秒数）；"
                   "直播间＝命中即按返回键退出；等待出现即返回＝出现后按返回键退出；"
                   "验证码＝命中即暂停设备提醒；滑块缺口＝滑块验证码需滑到的缺口位置；"
                   "滑块按钮＝滑块验证码底部拖柄。"),
@@ -569,7 +588,7 @@ class SwipeMixin:
     def _save_template_from_editor(self, win, old_name, is_new, chosen_img,
                                    var_name, var_pkg, var_kind, var_thr, var_dir,
                                    var_dx, var_dy, var_op, var_opx, var_opy, var_note,
-                                   var_bind, var_region):
+                                   var_bind, var_region, var_wait=None):
         """从编辑窗口保存模板：写图片 + 更新统一 配置.json（缺省字段不写，兼容旧配置）"""
         name = (var_name.get() or "").strip()
         if not name:
@@ -684,6 +703,15 @@ class SwipeMixin:
                 except Exception:
                     ox, oy = 0.5, 0.5
                 meta["op"] = [round(ox, 4), round(oy, 4)]
+        if kind == "wait_disappear" and var_wait is not None:
+            # 最长等待秒数：仅「等待元素消失」用；与默认值一致则不写字段，保持配置干净、旧配置无感
+            try:
+                wt = int(float((var_wait.get() or "").strip() or WAIT_DISAPPEAR_TIMEOUT))
+            except Exception:
+                wt = WAIT_DISAPPEAR_TIMEOUT
+            wt = max(3, min(120, wt))
+            if wt != WAIT_DISAPPEAR_TIMEOUT:
+                meta["wait_timeout"] = wt
         note = (var_note.get() or "").strip()
         if note:
             meta["note"] = note
@@ -1023,11 +1051,8 @@ class SwipeMixin:
                     timeout=15)
             time.sleep(1.6)
             # 复检：缺口/按钮任一仍命中说明未通过
-            code, png, _ = run_adb_binary("-s", serial, "exec-out", "screencap", "-p", timeout=25)
-            if code != 0 or not png:
-                continue
-            img2 = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
-            if img2 is None:
+            code, img2, _ = screencap_bgr(serial, timeout=25)
+            if code != 0 or img2 is None:
                 continue
             still = False
             for meta in (gap_meta, btn_meta):
@@ -1076,11 +1101,8 @@ class SwipeMixin:
             return
         self.last_img_check[serial] = now
 
-        code, png, _ = run_adb_binary("-s", serial, "exec-out", "screencap", "-p", timeout=25)
-        if code != 0 or not png:
-            return
-        img = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if img is None:
+        code, img, _ = screencap_bgr(serial, timeout=25)
+        if code != 0 or img is None:
             return
         target = self.target_apps.get(serial)
         # 滑块验证码自动处理优先：命中缺口+按钮模板即模拟拖拽，多次失败再降级人工暂停
@@ -1214,6 +1236,7 @@ class SwipeMixin:
             if _rn not in region_order:
                 region_order[_rn] = len(region_order)
         pending = []  # (region_name, y, kind, name, action, maxv, where)  region_name=任务区域名（分组首要键） y=屏幕纵坐标
+        wait_items = []  # 本帧仍在画面、需要转入高频盯防等它消失的「等待元素消失」模板 [(name, meta)]
         for name, meta in list(self.coords["templates"].items()):
             kind = meta.get("kind", "task")
             region_name = _region_name_of(meta)  # 任务区域名（自由文本，旧数字配置显示为「区域N」）
@@ -1221,8 +1244,11 @@ class SwipeMixin:
                 continue  # 直播间模板已由上方 live 前置循环处理
             if target and meta.get("pkg") and meta["pkg"] != target:
                 continue  # 模板属于其他应用（通用模板 pkg 为空，任何应用都匹配）
-            if now - self.img_cooldown.get((serial, name), 0) < 60:
-                continue  # 命中冷却 60 秒
+            # 命中冷却：普通模板 60 秒防重复点击；「等待元素消失」只压 3 秒——
+            # 倒计时/弹层这类元素消失后往往很快又重新出现，压 60 秒会导致整轮都不再盯防
+            _cool = WAIT_DISAPPEAR_COOLDOWN if kind == "wait_disappear" else 60
+            if now - self.img_cooldown.get((serial, name), 0) < _cool:
+                continue
             tpl = self._imread_any(self._tpl_path(meta))
             if tpl is None:
                 continue
@@ -1240,17 +1266,20 @@ class SwipeMixin:
                       maxloc[1] + th // 2 + int(th * offy))
 
             if kind == "wait_disappear":
-                # 等待元素消失：还在 → 记住位置继续等；消失 → 点击原位置（进入待执行列表）
+                # 等待元素消失：还在 → 记下最后位置并转入「高频盯防」；已不在 → 直接点它刚才的位置
                 if found:
-                    self.disappear_pos[(serial, name)] = (cx, cy)
+                    self.disappear_pos[(serial, name)] = (cx, cy, now)
+                    wait_items.append((name, meta))
                     if now - self.last_wait_log.get((serial, name), 0) > 30:
                         self.last_wait_log[(serial, name)] = now
-                        self.log("%s ⏳ 等待「%s」消失中（置信度 %.0f%%）…"
+                        self.log("%s ⏳ 「%s」仍在画面（置信度 %.0f%%），进入盯防等它消失…"
                                  % (serial, name, maxv * 100))
                 else:
                     pos = self.disappear_pos.pop((serial, name), None)
-                    if pos:
-                        pending.append((region_name, pos[1], "wait_disappear", name, pos, maxv, None))
+                    # 位置时效校验：太久以前看到的元素，位置可能已经变了，不用它
+                    if pos and now - (pos[2] if len(pos) > 2 else 0) <= self._wait_timeout_of(meta) + 10:
+                        pending.append((region_name, pos[1], "wait_disappear", name,
+                                        (pos[0], pos[1]), maxv, None))
                 continue
 
             # task / wait_appear：出现就触发（进入待执行列表）
@@ -1295,6 +1324,91 @@ class SwipeMixin:
                                      "input tap %d %d" % act, timeout=15)
                 self.log("%s 🖼 匹配到「%s」置信度 %.0f%%，已点击 (%d,%d)"
                          % (serial, name, maxv * 100, act[0], act[1]))
+
+        # 「等待元素消失」：命中后立刻转入高频盯防，抓消失那一帧再点它刚才的位置。
+        # 放在常规任务点击之后，不抢普通任务的点击时机。
+        for _wname, _wmeta in wait_items:
+            if self.stop_event.is_set():
+                break
+            self._await_disappear(serial, _wname, _wmeta)
+
+    def _wait_timeout_of(self, meta):
+        """模板的「最长等待秒数」：优先取模板自定义 wait_timeout，缺省用全局默认，夹在 3~120 秒"""
+        try:
+            v = float(meta.get("wait_timeout", WAIT_DISAPPEAR_TIMEOUT))
+        except Exception:
+            v = WAIT_DISAPPEAR_TIMEOUT
+        return max(3.0, min(120.0, v))
+
+    def _await_disappear(self, serial, name, meta):
+        """等待元素消失（高频盯防版）。
+
+        旧做法只在主巡检节拍（5~15 秒一次）里看它还在不在，倒计时/红包雨这类元素
+        往往几秒内就没了，慢一拍就永远等不到「消失」那帧，看起来就是功能不好使。
+        这里改成：命中后按 WAIT_DISAPPEAR_POLL 间隔连续截屏盯防，元素消失的瞬间
+        立即点击它最后出现的位置；超过 wait_timeout 秒还在就放弃，等下次命中重来。
+        """
+        tpl = self._imread_any(self._tpl_path(meta))
+        if tpl is None:
+            self.log("%s 「%s」模板图片读不到，等待元素消失跳过" % (serial, name))
+            return False
+        timeout = self._wait_timeout_of(meta)
+        threshold = meta.get("threshold", MATCH_THRESHOLD)
+        off = meta.get("click_offset") or []
+        offx = float(off[0]) if isinstance(off, (list, tuple)) and len(off) >= 2 else 0.0
+        offy = float(off[1]) if isinstance(off, (list, tuple)) and len(off) >= 2 else 0.0
+        t0 = time.time()
+        last_log = t0
+        pos = self.disappear_pos.get((serial, name))
+        _frame_cost = 0.0
+        _frames = 0
+        while time.time() - t0 < timeout:
+            if self.stop_event.is_set():
+                return False
+            _pause = self.pause_events.get(serial)
+            if _pause is not None and _pause.is_set():
+                return False  # 暂停中：放弃本次盯防，恢复后下一轮重新识别
+            # 截图本身就要 1~3 秒，够慢的就不额外等待；只有设备快到飞起时才补间隔，别把设备打满
+            if WAIT_DISAPPEAR_POLL > _frame_cost:
+                time.sleep(WAIT_DISAPPEAR_POLL - _frame_cost)
+            _t_frame = time.time()
+            code, img, _ = screencap_bgr(serial, timeout=25)
+            _frame_cost = time.time() - _t_frame
+            if code != 0 or img is None:
+                continue
+            _frames += 1
+            if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
+                return False
+            res = cv2.matchTemplate(img, tpl, cv2.TM_CCOEFF_NORMED)
+            _, maxv, _, maxloc = cv2.minMaxLoc(res)
+            th, tw = tpl.shape[:2]
+            if maxv >= threshold:  # 还在：刷新它当前的位置，继续盯
+                cx = maxloc[0] + tw // 2 + int(tw * offx)
+                cy = maxloc[1] + th // 2 + int(th * offy)
+                pos = (cx, cy, time.time())
+                self.disappear_pos[(serial, name)] = pos
+                if time.time() - last_log > 10:
+                    last_log = time.time()
+                    self.log("%s ⏳ 等待「%s」消失中（已盯 %.0f 秒 / 最多 %.0f 秒，第 %d 帧，每帧约 %.1f 秒）…"
+                             % (serial, name, time.time() - t0, timeout, _frames, _frame_cost))
+                continue
+            # 检测不到 = 已消失，点它最后出现的位置
+            if not pos:
+                self.log("%s 「%s」已消失，但没有记录到原位置，跳过点击" % (serial, name))
+                return False
+            x, y = int(pos[0]), int(pos[1])
+            run_adb("-s", serial, "shell", "input tap %d %d" % (x, y), timeout=15)
+            self.disappear_pos.pop((serial, name), None)
+            self.img_cooldown[(serial, name)] = time.time()
+            self.log("%s 🖼 「%s」已消失（盯了 %.1f 秒 / %d 帧，每帧约 %.1f 秒），已点击原位置 (%d,%d)"
+                     % (serial, name, time.time() - t0, _frames, _frame_cost, x, y))
+            return True
+        self.disappear_pos.pop((serial, name), None)
+        # 超时后压 30 秒再试：避免元素长期常驻画面时每轮都白盯一段，拖垮刷视频节奏
+        self.img_cooldown[(serial, name)] = time.time() + 27
+        self.log("%s ⏰ 等待「%s」消失超时（%.0f 秒内仍在画面），本次放弃，30 秒后重新识别"
+                 % (serial, name, timeout))
+        return False
 
     def _on_ui_correct_toggle(self):
         """界面异常自动纠正开关变化：仅保存状态（纠正逻辑在各设备线程内按开关判断）"""
@@ -1498,10 +1612,9 @@ class SwipeMixin:
         target = self.target_apps.get(serial)
         if state == "slider":
             # 滑块验证码：优先自动拖拽处理（失败内部降级为人工暂停等待）
-            code, png, _ = run_adb_binary("-s", serial, "exec-out", "screencap", "-p", timeout=25)
-            if code == 0 and png:
-                img = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
-                if img is not None and self._solve_slider_captcha(serial, img):
+            code, img, _ = screencap_bgr(serial, timeout=25)
+            if code == 0 and img is not None:
+                if self._solve_slider_captcha(serial, img):
                     return True
             # 截屏失败或未命中滑块模板：按人工验证码暂停兜底
             pe = self.pause_events.get(serial)
@@ -1587,11 +1700,8 @@ class SwipeMixin:
         if target and fg != target:
             return False
         if CV_OK and self.coords["templates"]:
-            code, png, _ = run_adb_binary("-s", serial, "exec-out", "screencap", "-p", timeout=25)
-            if code != 0 or not png:
-                return False
-            img = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
-            if img is None:
+            code, img, _ = screencap_bgr(serial, timeout=25)
+            if code != 0 or img is None:
                 return False
             state, _detail, _cp = self._classify_ui_state(serial, img, fg)
             if state != "normal":
@@ -1642,11 +1752,8 @@ class SwipeMixin:
         else:
             if not CV_OK or not self.coords["templates"]:
                 return True  # 无图像能力/无模板时仅靠前台判断（已有 _wait_on_target 处理）
-            code, png, _ = run_adb_binary("-s", serial, "exec-out", "screencap", "-p", timeout=25)
-            if code != 0 or not png:
-                return True
-            img = cv2.imdecode(np.frombuffer(png, dtype=np.uint8), cv2.IMREAD_COLOR)
-            if img is None:
+            code, img, _ = screencap_bgr(serial, timeout=25)
+            if code != 0 or img is None:
                 return True
             state, detail, close_pos = self._classify_ui_state(serial, img, fg)
             self.ui_last_state[serial] = state

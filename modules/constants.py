@@ -7,6 +7,10 @@ OFF_WORDS = ("off", "none", "关闭", "禁用", "停用")   # 地址填这些词
 
 MATCH_THRESHOLD = 0.80  # 模板匹配置信度阈值
 
+WAIT_DISAPPEAR_TIMEOUT = 15   # 「等待元素消失」命中后高频盯防的最长秒数（超时放弃本次，等下次命中重来）
+WAIT_DISAPPEAR_POLL = 0.3     # 「等待元素消失」盯防轮询间隔（秒），远小于主巡检节拍，才抓得住倒计时消失瞬间
+WAIT_DISAPPEAR_COOLDOWN = 3   # 「等待元素消失」命中冷却（秒），普通模板固定 60 秒，它需要紧跟
+
 APP_NAMES = {
     "com.smile.gifmaker": "快手",
     "com.kuaishou.nebula": "快手极速版",
@@ -46,7 +50,7 @@ UI_FORCE_RESTART_LIMIT = 2
 
 SWIPE_FAIL_SPEAK_THRESHOLD = 5
 
-APP_VERSION = "V1.0.2.3"  # 任何修改/升级都必须递增此版本号（爽哥规则）
+APP_VERSION = "V1.0.2.4"  # 任何修改/升级都必须递增此版本号（爽哥规则）
 
 APP_UPDATE_URL = "https://sgzs.xn--yrv04v.com/update.txt"          # 检查更新，格式: 版本号 或 版本号|下载链接
 

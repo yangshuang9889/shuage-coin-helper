@@ -2,12 +2,14 @@
 """刷视频核心（滑动循环/坐标/模板/界面异常纠正/签到/启动停止）。"""
 
 import hashlib
+import json
 import os
 import random
 import re
 import shutil
 import threading
 import time
+import zipfile
 from tkinter import filedialog
 from tkinter import messagebox
 from tkinter import simpledialog
@@ -16,7 +18,7 @@ from tkinter import ttk
 
 from adb_utils import run_adb, run_adb_binary, screencap_bgr
 from app_config import app_dir_name
-from constants import APP_NAMES, APP_VERSION, LAUNCHER_PKGS, MATCH_THRESHOLD, SWIPE_FAIL_SPEAK_THRESHOLD, TPL_COMMON_DIR, UI_CHECK_INTERVAL, UI_CORRECT_MAX_FAIL, UI_FORCE_RESTART_LIMIT, UI_FREEZE_MAX_FAIL, UI_RECOVER_MAX_ATTEMPTS, WAIT_DISAPPEAR_COOLDOWN, WAIT_DISAPPEAR_POLL, WAIT_DISAPPEAR_TIMEOUT
+from constants import APP_NAMES, APP_VERSION, FAST_HIT_COOLDOWN, LAUNCHER_PKGS, MATCH_THRESHOLD, SWIPE_FAIL_SPEAK_THRESHOLD, TEMPLATE_HIT_COOLDOWN, TPL_COMMON_DIR, TPL_TEST_SAVE_DIR, UI_CHECK_INTERVAL, UI_CORRECT_MAX_FAIL, UI_FORCE_RESTART_LIMIT, UI_FREEZE_MAX_FAIL, UI_RECOVER_MAX_ATTEMPTS, WAIT_APPEAR_FAST_POLL, WAIT_DISAPPEAR_COOLDOWN, WAIT_DISAPPEAR_POLL, WAIT_DISAPPEAR_TIMEOUT
 
 try:
     import cv2
@@ -296,6 +298,96 @@ class SwipeMixin:
         except Exception as e:
             messagebox.showwarning("提示", "打开模板目录失败: " + str(e))
 
+    def export_template_pack(self):
+        """导出模板包：把模板图片和模板配置打成 zip，换机/重装/分享都能一键还原。"""
+        tpls = self.coords.get("templates") or {}
+        if not tpls:
+            messagebox.showwarning("提示", "还没有任何模板，无需导出")
+            return
+        path = filedialog.asksaveasfilename(
+            title="导出模板包", defaultextension=".zip",
+            initialfile="图像模板_%s.zip" % time.strftime("%Y%m%d"),
+            filetypes=[("ZIP 压缩包", "*.zip")])
+        if not path:
+            return
+        cnt = 0
+        try:
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("templates.json", json.dumps(tpls, ensure_ascii=False, indent=2))
+                for _n, meta in tpls.items():
+                    p = self._tpl_path(meta) if isinstance(meta, dict) else ""
+                    if p and os.path.isfile(p):
+                        zf.write(p, os.path.relpath(p, self.data_dir).replace("\\", "/"))
+                        cnt += 1
+        except Exception as e:
+            messagebox.showerror("错误", "导出模板包失败: " + str(e))
+            return
+        self.log("📦 已导出模板包（%d 个模板 / %d 张图片）: %s" % (len(tpls), cnt, path))
+        messagebox.showinfo("导出成功", "已导出 %d 个模板（%d 张图片）到：\n%s"
+                            % (len(tpls), cnt, path))
+
+    def import_template_pack(self):
+        """导入模板包：合并到现有模板（同名覆盖），模板图片解压回 templates 目录。
+
+        只接受包内 templates/ 下的图片路径，任何跳出目录的条目一律跳过，
+        不会因为恶意压缩包把文件写到别的地方。
+        """
+        path = filedialog.askopenfilename(title="选择模板包（.zip）",
+                                          filetypes=[("ZIP 压缩包", "*.zip")])
+        if not path:
+            return
+        try:
+            zf = zipfile.ZipFile(path)
+        except Exception as e:
+            messagebox.showerror("错误", "打不开模板包: " + str(e))
+            return
+        with zf:
+            names = zf.namelist()
+            if "templates.json" not in names:
+                messagebox.showerror("错误", "这不是本程序的模板包（缺少 templates.json）")
+                return
+            try:
+                data = json.loads(zf.read("templates.json").decode("utf-8"))
+            except Exception as e:
+                messagebox.showerror("错误", "模板包配置损坏: " + str(e))
+                return
+            if not isinstance(data, dict):
+                messagebox.showerror("错误", "模板包配置格式不对")
+                return
+            imgs = 0
+            for n in names:
+                if n == "templates.json" or n.endswith("/"):
+                    continue
+                norm = os.path.normpath(n).replace("\\", "/")
+                if norm.startswith("../") or os.path.isabs(norm) or not norm.startswith("templates/"):
+                    continue  # 防路径穿越：只允许 templates/ 下的图片
+                dst = os.path.join(self.data_dir, *norm.split("/"))
+                if os.path.isfile(dst):
+                    continue  # 已有同名图片就保留本地，不覆盖用户现成的模板图
+                try:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    with open(dst, "wb") as f:
+                        f.write(zf.read(n))
+                    imgs += 1
+                except Exception:
+                    continue
+        added = upd = 0
+        for name, meta in data.items():
+            if not isinstance(meta, dict):
+                continue
+            if name in self.coords["templates"]:
+                upd += 1
+            else:
+                added += 1
+            self.coords["templates"][name] = meta
+        self._save_coords()
+        self._clear_tpl_cache()
+        self._refresh_tpl_list()
+        self.log("📦 已导入模板包：新增 %d 个模板，覆盖 %d 个，解压图片 %d 张" % (added, upd, imgs))
+        messagebox.showinfo("导入成功",
+                            "新增 %d 个模板\n覆盖同名 %d 个\n解压图片 %d 张"
+                            % (added, upd, imgs))
+
     def _refresh_tpl_list(self):
         """模板下拉框按应用分组显示：应用名 · 模板名"""
         items = []
@@ -323,6 +415,80 @@ class SwipeMixin:
         else:
             self.lbl_tpl.config(text="暂无模板，模板文件按应用存放在 templates/<应用名>/")
 
+    def test_template_match(self):
+        """模板匹配测试：现场截一帧，用选中模板做一次匹配，给出置信度/位置并输出标注图。
+
+        调阈值最怕「凭感觉」：这里把实际匹配分数直接摆出来，分数 ≥ 阈值才算命中，
+        低于阈值就说明要放宽阈值或重新采集模板图，不用等刷到那一步才知道配错了。
+        """
+        if not CV_OK:
+            messagebox.showerror("错误", "缺少 OpenCV，无法进行模板匹配测试")
+            return
+        disp = self.cmb_tpl.get()
+        name = getattr(self, "_tpl_display", {}).get(disp, disp)
+        meta = self.coords["templates"].get(name) if name else None
+        if not isinstance(meta, dict):
+            messagebox.showwarning("提示", "请先在左侧下拉框选中要测试的模板")
+            return
+        tpl = self._load_tpl(meta)
+        if tpl is None:
+            messagebox.showerror("错误", "模板图片读不到：" + (self._tpl_path(meta) or "路径为空"))
+            return
+        devices = self._checked_devices() or list(self.device_widgets.keys())
+        if not devices:
+            messagebox.showwarning("提示", "请先连接并检测设备")
+            return
+        serial = devices[0]
+        self.log("正在截屏测试模板「%s」（%s）…" % (name, serial))
+        code, img, err = screencap_bgr(serial, timeout=25)
+        if code != 0 or img is None:
+            messagebox.showerror("错误", "截屏失败: " + (err or "无数据"))
+            return
+        if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
+            messagebox.showwarning("提示", "模板图片比手机屏幕还大，无法匹配")
+            return
+        res = cv2.matchTemplate(img, tpl, cv2.TM_CCOEFF_NORMED)
+        _, maxv, _, maxloc = cv2.minMaxLoc(res)
+        threshold = meta.get("threshold", MATCH_THRESHOLD)
+        th, tw = tpl.shape[:2]
+        hit = maxv >= threshold
+        kind = meta.get("kind", "task")
+        # 标注图：命中绿框、未命中红框，框上方写分数，肉眼就能看出位置偏没偏
+        marked = img.copy()
+        color = (0, 200, 0) if hit else (0, 0, 255)
+        cv2.rectangle(marked, maxloc, (maxloc[0] + tw, maxloc[1] + th), color, 3)
+        cv2.putText(marked, "%.3f" % maxv, (max(4, maxloc[0]), max(26, maxloc[1] - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+        out = ""
+        try:
+            out_dir = os.path.join(self.data_dir, TPL_TEST_SAVE_DIR)
+            os.makedirs(out_dir, exist_ok=True)
+            safe = re.sub(r'[\\/:*?"<>|]', "_", name).strip() or "tpl"
+            out = os.path.join(out_dir, "%s_%d.png" % (safe, int(time.time())))
+            cv2.imencode(".png", marked)[1].tofile(out)
+            try:
+                os.startfile(out)
+            except Exception:
+                pass
+        except Exception as e:
+            out = ""
+            self.log_warning("标注图保存失败: " + str(e))
+        cx, cy = maxloc[0] + tw // 2, maxloc[1] + th // 2
+        lines = [
+            "模板：%s（%s）" % (name, self._TPL_KIND_NAMES.get(kind, kind)),
+            "置信度 %.1f%%　阈值 %.1f%%　%s"
+            % (maxv * 100, threshold * 100, "✅ 命中" if hit else "❌ 未命中"),
+            "命中位置 (%d, %d)　模板尺寸 %dx%d" % (cx, cy, tw, th),
+        ]
+        fg = self._get_foreground(serial)
+        if meta.get("pkg") and fg and fg != meta["pkg"]:
+            lines.append("⚠ 当前前台是 %s，模板属于 %s，切到对应页面再测更准"
+                         % (APP_NAMES.get(fg, fg), APP_NAMES.get(meta["pkg"], meta["pkg"])))
+        if out:
+            lines.append("标注图已保存并打开：%s" % out)
+        self.log("🔍 模板测试｜" + " ｜ ".join(lines[:3]))
+        messagebox.showinfo("模板匹配测试", "\n".join(lines))
+
     def delete_template(self):
         disp = self.cmb_tpl.get()
         name = getattr(self, "_tpl_display", {}).get(disp, disp)
@@ -341,6 +507,7 @@ class SwipeMixin:
             except Exception:
                 pass
         self._save_coords()
+        self._clear_tpl_cache()
         self._refresh_tpl_list()
         self.log("已删除图像模板: " + name)
 
@@ -484,11 +651,28 @@ class SwipeMixin:
         ttk.Label(frm, text="仅「等待元素消失」生效：命中后\n连续盯防这么久等它消失，超时\n放弃（默认 %d 秒）" % WAIT_DISAPPEAR_TIMEOUT,
                   foreground="#888", wraplength=170, justify="left").grid(row=row, column=2, sticky="w")
 
+        ttk.Label(frm, text="出现即点").grid(row=row, column=0, sticky="e", pady=3)
+        var_fast = tk.BooleanVar(value=bool(meta.get("fast")))
+        chk_fast = ttk.Checkbutton(frm, text="加速巡检，抓住一闪而过的按钮", variable=var_fast)
+        chk_fast.grid(row=row, column=1, sticky="w", padx=6)
+        ttk.Label(frm, text="仅「任务按钮」生效：还有加速模板未\n命中时，巡检间隔压到 %d 秒（默认按\n「图像识别间隔」），点完自动回落"
+                  % WAIT_APPEAR_FAST_POLL,
+                  foreground="#888", wraplength=170, justify="left").grid(row=row, column=2, sticky="w")
+        row += 1
+
         def _sync_wait_state(*_a):
-            """最长等待秒数只对「等待元素消失」可选，其它类型置灰"""
-            ok = self._TPL_KIND_REVERSE.get(var_kind.get(), "") == "wait_disappear"
+            """最长等待秒数只对「等待元素消失」可选；出现即点只对「任务按钮」可选，其它类型置灰"""
+            kind_now = self._TPL_KIND_REVERSE.get(var_kind.get(), "")
             try:
-                spn_wait.configure(state="normal" if ok else "disabled")
+                spn_wait.configure(state="normal" if kind_now == "wait_disappear" else "disabled")
+            except Exception:
+                pass
+            try:
+                if kind_now == "task":
+                    chk_fast.configure(state="normal")
+                else:
+                    var_fast.set(False)  # 非任务按钮类型不保留加速标记，避免配置里残留无效字段
+                    chk_fast.configure(state="disabled")
             except Exception:
                 pass
 
@@ -712,6 +896,9 @@ class SwipeMixin:
             wt = max(3, min(120, wt))
             if wt != WAIT_DISAPPEAR_TIMEOUT:
                 meta["wait_timeout"] = wt
+        if kind == "task" and var_fast.get():
+            # 「出现即点」加速：只有开启才写字段，旧配置无感
+            meta["fast"] = True
         note = (var_note.get() or "").strip()
         if note:
             meta["note"] = note
@@ -724,6 +911,7 @@ class SwipeMixin:
             existing.pop(old_name, None)
         existing[name] = meta
         self._save_coords()
+        self._clear_tpl_cache()  # 换图/换分类后立刻重读模板，不吃缓存里的旧图
         self._refresh_tpl_list()
         win.destroy()
         kind_name = self._TPL_KIND_NAMES.get(kind, kind)
@@ -757,6 +945,40 @@ class SwipeMixin:
             return cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
         except Exception:
             return None
+
+    def _load_tpl(self, meta):
+        """读取模板图（带缓存）：同一模板在每轮巡检里被反复匹配，不再反复读盘+解码。
+
+        缓存键为模板图片绝对路径，命中后用「修改时间 + 文件大小」校验，
+        模板被重新采集/替换/编辑后签名变化，自动重新读盘，绝不会用到旧图。
+        """
+        path = self._tpl_path(meta) if isinstance(meta, dict) else str(meta or "")
+        if not path:
+            return None
+        cache = self.__dict__.setdefault("_tpl_cache", {})
+        try:
+            st = os.stat(path)
+            sig = (st.st_mtime_ns, st.st_size)
+        except Exception:
+            cache.pop(path, None)
+            return None
+        hit = cache.get(path)
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+        img = self._imread_any(path)
+        if img is None:
+            cache.pop(path, None)
+            return None
+        cache[path] = (sig, img)
+        return img
+
+    def _clear_tpl_cache(self, path=None):
+        """清空模板图缓存（新增/编辑/删除模板后调用，保证换图立即生效）"""
+        cache = self.__dict__.setdefault("_tpl_cache", {})
+        if path:
+            cache.pop(path, None)
+        else:
+            cache.clear()
 
     def _show_capture_window(self, png_path, pkg, mode="point"):
         win = tk.Toplevel(self.root)
@@ -1006,7 +1228,7 @@ class SwipeMixin:
             """命中返回 (按钮中心X, 中心Y, 模板宽高)；未命中返回 None"""
             if target and meta.get("pkg") and meta["pkg"] != target:
                 return None
-            tpl = self._imread_any(self._tpl_path(meta))
+            tpl = self._load_tpl(meta)
             if tpl is None:
                 return None
             if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
@@ -1056,7 +1278,7 @@ class SwipeMixin:
                 continue
             still = False
             for meta in (gap_meta, btn_meta):
-                tpl = self._imread_any(self._tpl_path(meta))
+                tpl = self._load_tpl(meta)
                 if tpl is None or tpl.shape[0] > img2.shape[0] or tpl.shape[1] > img2.shape[1]:
                     continue
                 res = cv2.matchTemplate(img2, tpl, cv2.TM_CCOEFF_NORMED)
@@ -1091,12 +1313,40 @@ class SwipeMixin:
                 self.root.after(0, lambda: w["state"].config(text="运行中", foreground="green"))
         return True
 
+    def _has_fast_tpl(self, serial, now=None):
+        """是否还有「出现即点」加速模板处于可用状态（不在命中冷却中）。
+
+        有 → 本轮巡检间隔压到 WAIT_APPEAR_FAST_POLL 秒；
+        全部命中完进入冷却 → 回报 False，巡检回落到用户设定的间隔，不做无用空转。
+        """
+        now = time.time() if now is None else now
+        target = self.target_apps.get(serial)
+        try:
+            for name, meta in list(self.coords["templates"].items()):
+                if not isinstance(meta, dict) or not meta.get("fast"):
+                    continue
+                if meta.get("kind", "task") != "task":
+                    continue
+                if target and meta.get("pkg") and meta["pkg"] != target:
+                    continue  # 模板属于其他应用
+                if now - self.img_cooldown.get((serial, name), 0) < FAST_HIT_COOLDOWN:
+                    continue  # 刚点过，还在冷却
+                return True
+        except Exception:
+            return False
+        return False
+
     def _image_tasks(self, serial):
         """截屏做模板匹配，按钮出现就点击（用于到时间才能点的任务）"""
         if not self.var_img.get() or not CV_OK or not self.coords["templates"]:
             return
         interval = max(5, self.var_img_interval.get())
         now = time.time()
+        # 「出现即点」加速模式：只要还有加速模板处于可用状态（不在命中冷却中），
+        # 就把本轮巡检间隔压到 WAIT_APPEAR_FAST_POLL 秒，抓住一闪而过的按钮；
+        # 加速模板全部命中完（进入冷却）后自动回落到用户设定的间隔，不做无用空转。
+        if interval > WAIT_APPEAR_FAST_POLL and self._has_fast_tpl(serial, now):
+            interval = WAIT_APPEAR_FAST_POLL
         if now - self.last_img_check.get(serial, 0) < interval:
             return
         self.last_img_check[serial] = now
@@ -1114,9 +1364,9 @@ class SwipeMixin:
                 continue
             if target and meta.get("pkg") and meta["pkg"] != target:
                 continue  # 模板属于其他应用（通用模板 pkg 为空，任何应用都匹配）
-            if now - self.img_cooldown.get((serial, name), 0) < 60:
-                continue  # 命中冷却 60 秒
-            tpl = self._imread_any(self._tpl_path(meta))
+            if now - self.img_cooldown.get((serial, name), 0) < TEMPLATE_HIT_COOLDOWN:
+                continue  # 命中冷却（TEMPLATE_HIT_COOLDOWN，默认 60 秒）
+            tpl = self._load_tpl(meta)
             if tpl is None:
                 continue
             if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
@@ -1143,9 +1393,9 @@ class SwipeMixin:
                 continue
             if target and meta.get("pkg") and meta["pkg"] != target:
                 continue  # 模板属于其他应用（通用模板 pkg 为空，任何应用都匹配）
-            if now - self.img_cooldown.get((serial, name), 0) < 60:
-                continue  # 命中冷却 60 秒
-            tpl = self._imread_any(self._tpl_path(meta))
+            if now - self.img_cooldown.get((serial, name), 0) < TEMPLATE_HIT_COOLDOWN:
+                continue  # 命中冷却（TEMPLATE_HIT_COOLDOWN，默认 60 秒）
+            tpl = self._load_tpl(meta)
             if tpl is None:
                 continue
             if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
@@ -1184,9 +1434,9 @@ class SwipeMixin:
                 continue
             if target and meta.get("pkg") and meta["pkg"] != target:
                 continue  # 模板属于其他应用（通用模板 pkg 为空，任何应用都匹配）
-            if now - self.img_cooldown.get((serial, name), 0) < 60:
-                continue  # 命中冷却 60 秒
-            tpl = self._imread_any(self._tpl_path(meta))
+            if now - self.img_cooldown.get((serial, name), 0) < TEMPLATE_HIT_COOLDOWN:
+                continue  # 命中冷却（TEMPLATE_HIT_COOLDOWN，默认 60 秒）
+            tpl = self._load_tpl(meta)
             if tpl is None:
                 continue
             if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
@@ -1207,9 +1457,9 @@ class SwipeMixin:
                 continue
             if target and meta.get("pkg") and meta["pkg"] != target:
                 continue  # 模板属于其他应用（通用模板 pkg 为空，任何应用都匹配）
-            if now - self.img_cooldown.get((serial, name), 0) < 60:
-                continue  # 命中冷却 60 秒
-            tpl = self._imread_any(self._tpl_path(meta))
+            if now - self.img_cooldown.get((serial, name), 0) < TEMPLATE_HIT_COOLDOWN:
+                continue  # 命中冷却（TEMPLATE_HIT_COOLDOWN，默认 60 秒）
+            tpl = self._load_tpl(meta)
             if tpl is None:
                 continue
             if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
@@ -1245,11 +1495,17 @@ class SwipeMixin:
             if target and meta.get("pkg") and meta["pkg"] != target:
                 continue  # 模板属于其他应用（通用模板 pkg 为空，任何应用都匹配）
             # 命中冷却：普通模板 60 秒防重复点击；「等待元素消失」只压 3 秒——
-            # 倒计时/弹层这类元素消失后往往很快又重新出现，压 60 秒会导致整轮都不再盯防
-            _cool = WAIT_DISAPPEAR_COOLDOWN if kind == "wait_disappear" else 60
+            # 倒计时/弹层这类元素消失后往往很快又重新出现，压 60 秒会导致整轮都不再盯防；
+            # 「出现即点」模板压 FAST_HIT_COOLDOWN 秒，既防同一画面连点，又跟得上反复弹出的按钮
+            if kind == "wait_disappear":
+                _cool = WAIT_DISAPPEAR_COOLDOWN
+            elif meta.get("fast"):
+                _cool = FAST_HIT_COOLDOWN
+            else:
+                _cool = TEMPLATE_HIT_COOLDOWN
             if now - self.img_cooldown.get((serial, name), 0) < _cool:
                 continue
-            tpl = self._imread_any(self._tpl_path(meta))
+            tpl = self._load_tpl(meta)
             if tpl is None:
                 continue
             if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
@@ -1348,7 +1604,7 @@ class SwipeMixin:
         这里改成：命中后按 WAIT_DISAPPEAR_POLL 间隔连续截屏盯防，元素消失的瞬间
         立即点击它最后出现的位置；超过 wait_timeout 秒还在就放弃，等下次命中重来。
         """
-        tpl = self._imread_any(self._tpl_path(meta))
+        tpl = self._load_tpl(meta)
         if tpl is None:
             self.log("%s 「%s」模板图片读不到，等待元素消失跳过" % (serial, name))
             return False
@@ -1461,7 +1717,7 @@ class SwipeMixin:
                 continue
             if fg and meta.get("pkg") and meta["pkg"] != fg:
                 continue  # 模板属于其他应用（通用模板 pkg 为空，任何应用都匹配）
-            tpl = self._imread_any(self._tpl_path(meta))
+            tpl = self._load_tpl(meta)
             if tpl is None:
                 continue
             if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
@@ -1478,7 +1734,7 @@ class SwipeMixin:
                 continue
             if fg and meta.get("pkg") and meta["pkg"] != fg:
                 continue  # 模板属于其他应用（通用模板 pkg 为空，任何应用都匹配）
-            tpl = self._imread_any(self._tpl_path(meta))
+            tpl = self._load_tpl(meta)
             if tpl is None:
                 continue
             if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
@@ -1495,7 +1751,7 @@ class SwipeMixin:
                 continue
             if fg and meta.get("pkg") and meta["pkg"] != fg:
                 continue  # 模板属于其他应用（通用模板 pkg 为空，任何应用都匹配）
-            tpl = self._imread_any(self._tpl_path(meta))
+            tpl = self._load_tpl(meta)
             if tpl is None:
                 continue
             if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
@@ -1512,7 +1768,7 @@ class SwipeMixin:
                 continue
             if fg and meta.get("pkg") and meta["pkg"] != fg:
                 continue  # 模板属于其他应用（通用模板 pkg 为空，任何应用都匹配）
-            tpl = self._imread_any(self._tpl_path(meta))
+            tpl = self._load_tpl(meta)
             if tpl is None:
                 continue
             if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:
@@ -1528,7 +1784,7 @@ class SwipeMixin:
             kind = meta.get("kind", "task")
             if fg and meta.get("pkg") and meta["pkg"] != fg:
                 continue  # 模板属于其他应用（通用模板 pkg 为空，任何应用都匹配）
-            tpl = self._imread_any(self._tpl_path(meta))
+            tpl = self._load_tpl(meta)
             if tpl is None:
                 continue
             if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1]:

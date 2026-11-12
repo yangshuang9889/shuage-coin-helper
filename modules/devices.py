@@ -412,4 +412,12 @@ class DevicesMixin:
         self.root.after(0, _upd)
 
     def _checked_devices(self):
-        return [s for s, w in self.device_widgets.items() if w["var"].get()]
+        """已勾选的设备列表。设备控件结构异常时跳过，避免单个坏项让整块功能报错。"""
+        out = []
+        for s, w in self.device_widgets.items():
+            try:
+                if isinstance(w, dict) and w.get("var") is not None and w["var"].get():
+                    out.append(s)
+            except Exception:
+                continue
+        return out

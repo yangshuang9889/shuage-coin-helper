@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """adb 可执行文件路径与 run_adb / run_adb_binary / screencap_bgr 底层调用。"""
 
+import os
 import struct
 import subprocess
 import time
@@ -12,13 +13,23 @@ from utils import _find_bundled
 
 ADB_PATH = _find_bundled("adb") or ""
 
+# adb 找不到时的统一提示：之前会直接抛 WinError 87，用户看不出是 adb 路径的问题
+NO_ADB_MSG = "未找到 adb.exe，请确认程序目录下的 bin\\adb.exe 是否存在"
+
 def set_adb_path(path):
     """运行时切换 adb 路径（设置界面里可自定义）"""
     global ADB_PATH
     ADB_PATH = path
 
+def _adb_ready():
+    """adb 路径是否可用（空路径会让 subprocess 抛 WinError 87，看不出真实原因）"""
+    return bool(ADB_PATH) and os.path.isfile(ADB_PATH)
+
+
 def run_adb(*args, timeout=15):
     """调用 adb 命令。subprocess 二进制模式 + decode('utf-8')，避免 GBK 编码错误"""
+    if not _adb_ready():
+        return -1, "", NO_ADB_MSG
     cmd = [ADB_PATH] + list(args)
     try:
         result = subprocess.run(
@@ -36,6 +47,8 @@ def run_adb(*args, timeout=15):
 
 def run_adb_binary(*args, timeout=25):
     """调用 adb 并返回原始二进制输出（用于截屏）"""
+    if not _adb_ready():
+        return -1, b"", NO_ADB_MSG
     cmd = [ADB_PATH] + list(args)
     try:
         result = subprocess.run(

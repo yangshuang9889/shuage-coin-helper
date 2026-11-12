@@ -17,14 +17,24 @@ def _find_on_path(name):
 
 def _find_bundled(name):
     """优先在程序目录 bin 子目录查找自带的 adb/scrcpy.exe（安装包内置），再回退到系统 PATH"""
+    roots = []
     try:
         if getattr(sys, "frozen", False):
-            base = os.path.dirname(os.path.abspath(sys.executable))
+            roots.append(os.path.dirname(os.path.abspath(sys.executable)))
         else:
-            base = os.path.dirname(os.path.abspath(sys.argv[0]))
-        cand = os.path.join(base, "bin", name + ".exe")
-        if os.path.isfile(cand):
-            return cand
+            roots.append(os.path.dirname(os.path.abspath(sys.argv[0])))
     except Exception:
         pass
+    try:
+        # 兜底：模块文件所在目录的上一级（源码运行时无论从哪个目录启动都能找到 bin）
+        roots.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    except Exception:
+        pass
+    for base in roots:
+        try:
+            cand = os.path.join(base, "bin", name + ".exe")
+            if os.path.isfile(cand):
+                return cand
+        except Exception:
+            continue
     return _find_on_path(name)

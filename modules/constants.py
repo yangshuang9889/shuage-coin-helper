@@ -11,6 +11,14 @@ WAIT_DISAPPEAR_TIMEOUT = 15   # 「等待元素消失」命中后高频盯防的
 WAIT_DISAPPEAR_POLL = 0.3     # 「等待元素消失」盯防轮询间隔（秒），远小于主巡检节拍，才抓得住倒计时消失瞬间
 WAIT_DISAPPEAR_COOLDOWN = 3   # 「等待元素消失」命中冷却（秒），普通模板固定 60 秒，它需要紧跟
 
+TEMPLATE_HIT_COOLDOWN = 60    # 前置模板（任务完成/验证码/直播间/出现即点）命中后的冷却秒数
+
+WAIT_APPEAR_FAST_POLL = 3     # 「出现即点」加速模式的巡检间隔上限（秒），默认巡检 15 秒抓不住一闪而过的按钮
+
+FAST_HIT_COOLDOWN = 5         # 「出现即点」模板命中后的冷却（秒），比普通模板 60 秒短，能跟上反复弹出的按钮
+
+TPL_TEST_SAVE_DIR = "template_test"  # 模板匹配测试结果（标注图）子目录名，落在 data_dir 下
+
 APP_NAMES = {
     "com.smile.gifmaker": "快手",
     "com.kuaishou.nebula": "快手极速版",
@@ -50,7 +58,7 @@ UI_FORCE_RESTART_LIMIT = 2
 
 SWIPE_FAIL_SPEAK_THRESHOLD = 5
 
-APP_VERSION = "V1.0.2.4"  # 任何修改/升级都必须递增此版本号（爽哥规则）
+APP_VERSION = "V1.0.2.5"  # 任何修改/升级都必须递增此版本号（爽哥规则）
 
 APP_UPDATE_URL = "https://sgzs.xn--yrv04v.com/update.txt"          # 检查更新，格式: 版本号 或 版本号|下载链接
 

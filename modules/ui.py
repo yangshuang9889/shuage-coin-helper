@@ -415,6 +415,8 @@ class UiMixin:
         self.cmb_tpl.pack(side="left")
         ttk.Button(row_tpl, text="✏ 编辑模板",
                    command=self.edit_template).pack(side="left", padx=(6, 0))
+        ttk.Button(row_tpl, text="🔍 测试匹配",
+                   command=self.test_template_match).pack(side="left", padx=(4, 0))
         ttk.Button(row_tpl, text="＋ 新增模板(选图片)",
                    command=self.add_template_local).pack(side="left", padx=6)
         ttk.Button(row_tpl, text="✏ 改分类",
@@ -425,6 +427,15 @@ class UiMixin:
                    command=self.open_tpl_dir).pack(side="left")
         self.lbl_tpl = ttk.Label(row_tpl, text="", foreground="#888")
         self.lbl_tpl.pack(side="left", padx=10)
+
+        row_tpl2 = ttk.Frame(frm_img)
+        row_tpl2.pack(fill="x", padx=8, pady=(0, 6))
+        ttk.Button(row_tpl2, text="📦 导出模板包",
+                   command=self.export_template_pack).pack(side="left")
+        ttk.Button(row_tpl2, text="📦 导入模板包",
+                   command=self.import_template_pack).pack(side="left", padx=6)
+        ttk.Label(row_tpl2, text="换机 / 备份 / 分享模板用：打包图片与全部参数（.zip）",
+                  foreground="#888").pack(side="left", padx=8)
         self._refresh_tpl_list()
 
         # 设置区（设置标签页）
